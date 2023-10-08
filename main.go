@@ -2,14 +2,25 @@ package main
 
 import (
 	"fmt"
-	pb "github.com/calvardo2004/vehicle-positions/proto"
+	pb "github.com/calvarado2004/vehicle-positions/proto"
 )
 
 func main() {
-	vehicle := &pb.VehiclePosition{
-		VehicleId: "V123",
-		// ... set other fields
+
+	tripId := "123"
+
+	licensePlate := "LIC123"
+
+	vehicleDescriptor := pb.VehicleDescriptor{
+		LicensePlate: &licensePlate,
 	}
 
-	fmt.Println(vehicle)
+	vehicle := &pb.VehiclePosition{
+		Trip: &pb.TripDescriptor{
+			TripId: &tripId,
+		},
+		Vehicle: &vehicleDescriptor,
+	}
+
+	fmt.Println(vehicle.Vehicle.LicensePlate)
 }
