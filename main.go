@@ -14,76 +14,6 @@ import (
 	"time"
 )
 
-type BusPosition struct {
-	ID        string
-	Latitude  float64
-	Longitude float64
-	Label     string
-	Bearing   float64
-}
-
-type VehiclePosition struct {
-	Trip                *pb.TripDescriptor
-	Vehicle             *pb.VehicleDescriptor
-	Position            *pb.Position
-	CurrentStopSequence *uint32
-	StopId              *string
-	CurrentStatus       *pb.VehiclePosition_VehicleStopStatus
-	Timestamp           *uint64
-	CongestionLevel     *pb.VehiclePosition_CongestionLevel
-	OccupancyStatus     *pb.VehiclePosition_OccupancyStatus
-}
-
-type TripUpdate struct {
-	Trip           *pb.TripDescriptor
-	Vehicle        *pb.VehicleDescriptor
-	StopTimeUpdate []*pb.TripUpdate_StopTimeUpdate
-	Timestamp      *uint64
-	Delay          *int32
-}
-
-type Route struct {
-	ID        string `csv:"route_id"`
-	ShortName string `csv:"route_short_name"`
-	LongName  string `csv:"route_long_name"`
-	Color     string `csv:"route_color"`
-	TextColor string `csv:"route_text_color"`
-	// Add other fields as required.
-}
-
-type Shape struct {
-	ShapeId      string  `csv:"shape_id"`
-	Latitude     float64 `csv:"shape_pt_lat"`
-	Longitude    float64 `csv:"shape_pt_lon"`
-	Sequence     int     `csv:"shape_pt_sequence"`
-	DistTraveled float64 `csv:"shape_dist_traveled"`
-}
-
-type Stop struct {
-	StopID    string  `csv:"stop_id"`
-	StopCode  string  `csv:"stop_code"`
-	StopName  string  `csv:"stop_name"`
-	StopDesc  string  `csv:"stop_desc"`
-	Latitude  float64 `csv:"stop_lat"`
-	Longitude float64 `csv:"stop_lon"`
-}
-
-var currentBusPositions []BusPosition
-
-type RouteVisualization struct {
-	RouteInfo   Route
-	Shapes      []Shape
-	Stops       []Stop
-	Buses       []BusVisualization
-	TripUpdates []TripUpdate
-}
-
-type BusVisualization struct {
-	BusPosition   BusPosition
-	TripInfo      *pb.TripDescriptor
-	StopSequences []*pb.TripUpdate_StopTimeUpdate
-}
-
 func routeVisualizationHandler(w http.ResponseWriter, r *http.Request) {
 	routeID := r.URL.Query().Get("route_id")
 	if routeID == "" {
@@ -101,14 +31,16 @@ func routeVisualizationHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// TODO: Filter shapes by routeID. This depends on your shapes' data structure.
 	shapes, _ := ParseShapes("./google_transit/shapes.txt")
 
-	// TODO: Filter stops by routeID. This depends on your stops' data structure.
 	stops, _ := ParseStops("./google_transit/stops.txt")
 
-	buses := getBusPositions()
-	tripUpdates := getTripUpdates()
+	martaBusPositionsURL := "https://gtfs-rt.itsmarta.com/TMGTFSRealTimeWebService/vehicle/vehiclepositions.pb"
+
+	buses := getBusPositions(martaBusPositionsURL)
+
+	martaTripUpdatesURL := "https://gtfs-rt.itsmarta.com/TMGTFSRealTimeWebService/tripupdate/tripupdates.pb"
+	tripUpdates := getTripUpdates(martaTripUpdatesURL)
 
 	var busVisualizations []BusVisualization
 	for _, bus := range buses {
@@ -154,7 +86,9 @@ func busPositionsHandler(w http.ResponseWriter, r *http.Request) {
 func tripUpdatesHandler(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
-	err := json.NewEncoder(w).Encode(getTripUpdates())
+	martaTripUpdatesURL := "https://gtfs-rt.itsmarta.com/TMGTFSRealTimeWebService/tripupdate/tripupdates.pb"
+
+	err := json.NewEncoder(w).Encode(getTripUpdates(martaTripUpdatesURL))
 	if err != nil {
 		http.Error(w, "Failed to encode data", http.StatusInternalServerError)
 		return
@@ -215,12 +149,14 @@ func mainPageHandler(w http.ResponseWriter, r *http.Request) {
 
 func main() {
 
-	currentBusPositions = getBusPositions()
+	martaBusPositionsURL := "https://gtfs-rt.itsmarta.com/TMGTFSRealTimeWebService/vehicle/vehiclepositions.pb"
+
+	currentBusPositions = getBusPositions(martaBusPositionsURL)
 
 	// Start fetching bus positions every 15 seconds
 	go func() {
 		for range time.Tick(1 * time.Second * 15) {
-			currentBusPositions = getBusPositions()
+			currentBusPositions = getBusPositions(martaBusPositionsURL)
 			log.Println("Updated bus positions!")
 		}
 	}()
@@ -250,9 +186,9 @@ func main() {
 	}
 }
 
-func getBusPositions() []BusPosition {
-
-	response, err := http.Get("https://gtfs-rt.itsmarta.com/TMGTFSRealTimeWebService/vehicle/vehiclepositions.pb")
+// getBusPositions fetches bus positions from the MARTA API
+func getBusPositions(apiURL string) []BusPosition {
+	response, err := http.Get(apiURL)
 	if err != nil {
 		log.Fatalf("Failed to fetch data from URL: %v", err)
 	}
@@ -277,7 +213,6 @@ func getBusPositions() []BusPosition {
 	busPositions := make([]BusPosition, 0)
 
 	for _, entity := range feed.Entity {
-
 		position := entity.GetVehicle().GetPosition()
 		currentStopSequence := entity.GetVehicle().GetCurrentStopSequence()
 		stopId := entity.GetVehicle().GetStopId()
@@ -312,9 +247,9 @@ func getBusPositions() []BusPosition {
 }
 
 // getTripUpdates fetches trip updates from the MARTA API
-func getTripUpdates() []TripUpdate {
+func getTripUpdates(apiURL string) []TripUpdate {
 
-	response, err := http.Get("https://gtfs-rt.itsmarta.com/TMGTFSRealTimeWebService/tripupdate/tripupdates.pb")
+	response, err := http.Get(apiURL)
 	if err != nil {
 		log.Fatalf("Failed to fetch data from URL: %v", err)
 	}
@@ -462,8 +397,8 @@ func ParseRoutesFromReader(file *os.File) ([]Route, error) {
 
 		route := Route{
 			ID:        record[0],
-			ShortName: record[1],
-			LongName:  record[2],
+			ShortName: record[2],
+			LongName:  record[3],
 			Color:     record[7],
 			TextColor: record[8],
 		}
