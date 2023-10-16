@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bus Positions Visualization</title>
+    <style>
+        #map {
+            height: 600px;
+            width: 100%;
+        }
+    </style>
+</head>
+<body>
+<div id="map"></div>
+
+<script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyCs6lKA0oR1Z-W9w5Chbh_F8dI-SijAub8&libraries=visualization"></script>
+
+<script>
+    let map;
+    const busMarkers = {};
+
+
+    function fetchCrimeData() {
+        fetch('http://127.0.0.1:5050/api/crime_data')
+            .then(response => response.json())
+            .then(data => {
+                heatmapData = data.map(point => new google.maps.LatLng(point.lat, point.lng));
+
+                // Render the heatmap using the fetched data
+                new google.maps.visualization.HeatmapLayer({
+                    data: heatmapData,
+                    map: map,
+                    radius: 20
+                });
+            });
+    }
+
+        let routePaths = {};
+
+    let heatmapData = [];
+
+    function fetchStopsData() {
+        fetch('http://localhost:8080/stops')
+            .then(response => response.json())
+            .then(stops => {
+                stops.forEach(stop => {
+                    const stopPosition = new google.maps.LatLng(stop.Latitude, stop.Longitude);
+
+                    const stopIcon = {
+                        url: 'http://localhost:8080/assets/stop-icon.png',
+                        scaledSize: new google.maps.Size(40, 40),
+                    };
+
+                    const marker = new google.maps.Marker({
+                        position: stopPosition,
+                        map: map,
+                        icon: stopIcon,
+                        title: stop.Name
+                    });
+                });
+            });
+    }
+
+
+    function drawRoutes() {
+        fetch('http://localhost:8080/shapes')
+            .then(response => response.json())
+            .then(data => {
+                // Group data by RouteID
+                let groupedByRouteID = {};
+
+                data.forEach(shape => {
+                    if (!groupedByRouteID[shape.ShapeId]) {
+                        groupedByRouteID[shape.ShapeId] = [];
+                    }
+                    groupedByRouteID[shape.ShapeId].push({
+                        lat: shape.Latitude,
+                        lng: shape.Longitude
+                    });
+                });
+
+                // Fetch route colors
+                fetch('http://localhost:8080/routes')
+                    .then(response => response.json())
+                    .then(routes => {
+                        const routeColors = {};
+                        routes.forEach(route => {
+                            routeColors[route.ID] = `#${route.Color}`;
+                        });
+
+                        // Draw paths for each route
+                        for (let [routeID, coordinates] of Object.entries(groupedByRouteID)) {
+                            if (routePaths[routeID]) {
+                                routePaths[routeID].setMap(null); // Clear previous path
+                            }
+
+                            routePaths[routeID] = new google.maps.Polyline({
+                                path: coordinates,
+                                geodesic: true,
+                                strokeColor: routeColors[routeID] || '#0f18c9', // Use route color or default to blue
+                                strokeOpacity: 1.0,
+                                strokeWeight: 2
+                            });
+
+                            routePaths[routeID].setMap(map);
+                        }
+                    });
+            });
+    }
+
+
+    function fetchBusPositions() {
+        fetch('http://localhost:8080/bus-positions')
+            .then(response => response.json())
+            .then(data => {
+                const newBusIds = new Set(data.map(bus => bus.ID));
+
+
+
+                // Clear markers for buses no longer in the new data
+                for (let busId in busMarkers) {
+                    if (!newBusIds.has(busId)) {
+                        busMarkers[busId].setMap(null);
+                        delete busMarkers[busId];
+                    }
+                }
+
+                for (let bus of data) {
+                    const position = new google.maps.LatLng(bus.Latitude, bus.Longitude);
+
+                    if (busMarkers[bus.ID]) {
+                        // Update position if marker already exists
+                        busMarkers[bus.ID].setPosition(position);
+                    } else {
+
+                        // Create new marker if it doesn't exist
+                        const busIcon = {
+                            url: 'http://localhost:8080/assets/bus-icon2.png',
+                            scaledSize: new google.maps.Size(64, 64),
+                            rotation: bus.Bearing,
+                        };
+
+                        const marker = new google.maps.Marker({
+                            position: position,
+                            map: map,
+                            icon: busIcon,
+                            label: bus.Label,
+                            title: bus.ID,
+                        });
+
+                        busMarkers[bus.ID] = marker;
+                    }
+                }
+            });
+    }
+
+
+    function initMap() {
+        map = new google.maps.Map(document.getElementById("map"), {
+            zoom: 10,
+            center: { lat: 33.7769, lng: -84.3895 } // Some initial center point
+        });
+
+        // Fetch crime data heat map
+        fetchCrimeData();
+
+        // Fetch initial data and render
+        fetchBusPositions();
+
+        fetchStopsData();
+
+        // Periodically fetch bus positions every 10 seconds
+        setInterval(fetchBusPositions, 10000);
+
+
+        drawRoutes();
+    }
+
+    // Initialize map after the page is fully loaded
+    window.onload = initMap;
+</script>
+</body>
+</html>
