@@ -4,6 +4,8 @@ import (
 	"encoding/csv"
 	"encoding/json"
 	pb "github.com/calvarado2004/vehicle-positions/proto"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/rs/cors"
 	"google.golang.org/protobuf/proto"
 	"io"
@@ -14,7 +16,35 @@ import (
 	"time"
 )
 
+var (
+	httpRequestDuration = prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Name: "http_request_duration_seconds",
+		Help: "Duration of HTTP requests.",
+	}, []string{"path"})
+
+	httpRequestsTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "http_requests_total",
+		Help: "Total number of HTTP requests.",
+	}, []string{"path", "status"})
+
+	busCount = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "bus_count",
+			Help: "Total number of buses fetched from the API.",
+		},
+	)
+)
+
+func init() {
+	prometheus.MustRegister(httpRequestDuration)
+	prometheus.MustRegister(httpRequestsTotal)
+	prometheus.MustRegister(busCount)
+
+}
+
 func routeVisualizationHandler(w http.ResponseWriter, r *http.Request) {
+	start := time.Now()
+
 	routeID := r.URL.Query().Get("route_id")
 	if routeID == "" {
 		http.Error(w, "Route ID not provided", http.StatusBadRequest)
@@ -38,6 +68,7 @@ func routeVisualizationHandler(w http.ResponseWriter, r *http.Request) {
 	martaBusPositionsURL := "https://gtfs-rt.itsmarta.com/TMGTFSRealTimeWebService/vehicle/vehiclepositions.pb"
 
 	buses := getBusPositions(martaBusPositionsURL)
+	busCount.Set(float64(len(buses)))
 
 	martaTripUpdatesURL := "https://gtfs-rt.itsmarta.com/TMGTFSRealTimeWebService/tripupdate/tripupdates.pb"
 	tripUpdates := getTripUpdates(martaTripUpdatesURL)
@@ -71,6 +102,9 @@ func routeVisualizationHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Failed to encode data", http.StatusInternalServerError)
 		return
 	}
+	duration := time.Since(start).Seconds()
+	httpRequestDuration.WithLabelValues("/route-visualization").Observe(duration)
+	httpRequestsTotal.WithLabelValues("/route-visualization", strconv.Itoa(http.StatusOK)).Inc()
 }
 
 func busPositionsHandler(w http.ResponseWriter, r *http.Request) {
@@ -152,11 +186,13 @@ func main() {
 	martaBusPositionsURL := "https://gtfs-rt.itsmarta.com/TMGTFSRealTimeWebService/vehicle/vehiclepositions.pb"
 
 	currentBusPositions = getBusPositions(martaBusPositionsURL)
+	busCount.Set(float64(len(currentBusPositions)))
 
 	// Start fetching bus positions every 15 seconds
 	go func() {
 		for range time.Tick(1 * time.Second * 15) {
 			currentBusPositions = getBusPositions(martaBusPositionsURL)
+			busCount.Set(float64(len(currentBusPositions)))
 			log.Println("Updated bus positions!")
 		}
 	}()
@@ -169,6 +205,8 @@ func main() {
 	handler.HandleFunc("/stops", stopsHandler)
 	handler.HandleFunc("/", mainPageHandler)
 	handler.HandleFunc("/route-visualization", routeVisualizationHandler)
+	handler.HandleFunc("/metrics", promhttp.Handler().ServeHTTP)
+
 	handler.HandleFunc("/assets/", func(w http.ResponseWriter, r *http.Request) {
 		http.ServeFile(w, r, r.URL.Path[1:])
 	})
