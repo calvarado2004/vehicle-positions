@@ -176,11 +176,6 @@ func stopsHandler(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func mainPageHandler(w http.ResponseWriter, r *http.Request) {
-	http.ServeFile(w, r, "vehicles.html")
-
-}
-
 func main() {
 
 	martaBusPositionsURL := "https://gtfs-rt.itsmarta.com/TMGTFSRealTimeWebService/vehicle/vehiclepositions.pb"
@@ -203,7 +198,6 @@ func main() {
 	handler.HandleFunc("/trip-updates", tripUpdatesHandler)
 	handler.HandleFunc("/bus-positions", busPositionsHandler)
 	handler.HandleFunc("/stops", stopsHandler)
-	handler.HandleFunc("/", mainPageHandler)
 	handler.HandleFunc("/route-visualization", routeVisualizationHandler)
 	handler.HandleFunc("/metrics", promhttp.Handler().ServeHTTP)
 
